@@ -1,0 +1,15 @@
+tensorflow==2.10.1
+tensorflow-hub
+numpy==1.24.3
+librosa
+pandas
+soundfile
+tqdm
+matplotlib
+seaborn
+scikit-learn
+ncps
+imbalanced-learn
+PyWavelets
+scipy
+git+https://github.com/raminmh/CfC.git#subdirectory=Tensorflow

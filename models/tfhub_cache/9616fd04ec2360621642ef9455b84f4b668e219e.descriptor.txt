@@ -1,0 +1,3 @@
+Module: https://tfhub.dev/google/yamnet/1
+Download Time: 2025-04-24 13:07:23.492548
+Downloader Hostname: EVA (PID:20916)
