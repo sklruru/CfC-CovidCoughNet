@@ -1,0 +1,6 @@
+Metric,Value
+Accuracy,0.8514285683631897
+Precision (Positive),0.7457627118644068
+Recall (Positive),0.8
+F1-Score (Positive),0.7719298245614035
+AUC,0.9234848484848485

@@ -1,0 +1,8 @@
+Metric,Value
+Test_Accuracy,0.89171974522293
+Test_Precision (Positive),0.7714285714285715
+Test_Recall (Positive),0.75
+Test_F1-Score (Positive),0.7605633802816901
+Test_AUC,0.8969237832874196
+Val_Accuracy,0.8297872340425532
+Val_AUC,0.8257355547678128
