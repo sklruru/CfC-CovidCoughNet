@@ -1,4 +1,4 @@
-# YCC-CovidCoughNet
+# CfC-CovidCoughNet
 
 A lightweight and modular deep learning pipeline for COVID-19 cough sound classification using **YAMNet**, **CNN**, and **Closed-form Continuous-time Neural Network (CFC)**.
 
