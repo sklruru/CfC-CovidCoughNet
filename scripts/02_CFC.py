@@ -11,10 +11,9 @@ import pandas as pd
 from datetime import datetime
 from imblearn.over_sampling import SMOTE
 
-# Path setup
+# path setup
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
-
 sys.path.append(project_root)
 from models.tf_cfc import build_cfc_model
 
@@ -24,8 +23,12 @@ results_output_path = os.path.join(project_root, "results", timestamp)
 os.makedirs(results_output_path, exist_ok=True)
 
 # Experiment parameters
+# random_seeds = [42, 123]
+epochs = 2
+# learning_rate = 0.0004
+
 random_seeds = [42, 123, 256, 789, 1024]
-epochs = 150
+# epochs = 150
 validation_ratio = 0.2
 test_ratio = 0.1
 batch_size = 16
@@ -47,7 +50,6 @@ focal_loss_gamma = 2.0
 focal_loss_alpha = 0.25
 categories = ["Negative", "Positive"]
 
-# Matplotlib settings
 plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
@@ -67,26 +69,16 @@ def categorical_focal_loss(gamma=focal_loss_gamma, alpha=focal_loss_alpha):
 def load_features(base_dir, categories):
     features = []
     labels = []
-
     for i, category in enumerate(categories):
         cat_dir = os.path.join(base_dir, category)
         files = os.listdir(cat_dir)
-        print(f"Loading {len(files)} {category} samples")
-
         for file in files:
             file_path = os.path.join(cat_dir, file)
             feature = np.load(file_path)
             features.append(feature)
             labels.append(i)
-
     features_array = np.array(features)
     labels_array = np.array(labels)
-
-    unique, counts = np.unique(labels_array, return_counts=True)
-    class_distribution = dict(zip(categories, counts))
-    print(f"Class distribution: {class_distribution}")
-    print(f"Negative/Positive ratio: {class_distribution['Negative'] / class_distribution['Positive']:.1f}:1")
-
     return features_array, labels_array
 
 
@@ -100,15 +92,13 @@ def create_dataset(features, labels, batch_size, is_training=True):
 
 def train_and_evaluate(seed):
     print(f"\nTraining with seed {seed}")
-
     np.random.seed(seed)
     tf.random.set_seed(seed)
-
     seed_output_path = os.path.join(results_output_path, f'seed_{seed}')
     os.makedirs(seed_output_path, exist_ok=True)
     model_save_path = os.path.join(seed_output_path, 'cfc_model')
 
-    # Split dataset
+    # split dataset
     X_train_val, X_test, y_train_val, y_test = train_test_split(
         X, y, test_size=test_ratio, random_state=seed, stratify=y
     )
@@ -118,22 +108,17 @@ def train_and_evaluate(seed):
         random_state=seed,
         stratify=y_train_val
     )
-    print(f"Train={len(X_train)}, Val={len(X_val)}, Test={len(X_test)} samples")
 
     # SMOTE oversampling
     n_samples = X_train.shape[0]
     orig_shape = X_train.shape[1:]
     X_train_reshaped = X_train.reshape(n_samples, -1)
-
     smote = SMOTE(random_state=seed)
     X_train_resampled, y_train_resampled = smote.fit_resample(X_train_reshaped, y_train)
-
     X_train = X_train_resampled.reshape(-1, *orig_shape)
     y_train = y_train_resampled
 
-    print(f"After oversampling: {dict(zip(categories, np.unique(y_train, return_counts=True)[1]))}")
-
-    # Class weights
+    # class weights
     class_weights = class_weight.compute_class_weight(
         class_weight='balanced',
         classes=np.unique(y_train),
@@ -141,21 +126,21 @@ def train_and_evaluate(seed):
     )
     class_weight_dict = dict(zip(range(len(categories)), class_weights))
 
-    # Convert to one-hot
+    # convert to one-hot
     y_train_onehot = tf.keras.utils.to_categorical(y_train)
     y_val_onehot = tf.keras.utils.to_categorical(y_val)
     y_test_onehot = tf.keras.utils.to_categorical(y_test)
 
-    # Create datasets
+    # create datasets
     train_dataset = create_dataset(X_train, y_train_onehot, batch_size)
     val_dataset = create_dataset(X_val, y_val_onehot, batch_size, is_training=False)
     test_dataset = create_dataset(X_test, y_test_onehot, batch_size, is_training=False)
 
-    # Build model
+    # build CfC model
     input_shape = X_train[0].shape
     model = build_cfc_model(input_shape, MODEL_HPARAMS, len(categories))
 
-    # Compile model
+    # compile CfC model
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
         loss=categorical_focal_loss(),
@@ -164,7 +149,7 @@ def train_and_evaluate(seed):
                  tf.keras.metrics.Recall(name='recall')]
     )
 
-    # Callbacks
+    # callbacks
     callbacks = [
         tf.keras.callbacks.EarlyStopping(
             monitor='val_recall', patience=early_stopping_patience,
@@ -179,7 +164,7 @@ def train_and_evaluate(seed):
         )
     ]
 
-    # Train model
+    # train model
     history = model.fit(
         train_dataset,
         epochs=epochs,
@@ -189,23 +174,15 @@ def train_and_evaluate(seed):
         verbose=1
     )
 
-    # Evaluate model
+    # evaluate model
     test_metrics = model.evaluate(test_dataset, verbose=0)
-    print(f"Test metrics: Loss={test_metrics[0]:.4f}, Accuracy={test_metrics[1]:.4f}, "
-          f"AUC={test_metrics[2]:.4f}, Precision={test_metrics[3]:.4f}, Recall={test_metrics[4]:.4f}")
-
     y_pred_prob = model.predict(X_test)
     y_pred = np.argmax(y_pred_prob, axis=1)
 
-    # Classification report
+    # classification report
     cm = confusion_matrix(y_test, y_pred)
-    print("\nClassification Report:")
-    print(classification_report(y_test, y_pred, target_names=categories, digits=6))
-
     auc_score = roc_auc_score(y_test, y_pred_prob[:, 1])
-    print(f"Test AUC: {auc_score:.4f}")
-
-    # Save confusion matrix
+    # save confusion matrix
     plt.figure(figsize=(8, 6))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                 xticklabels=categories, yticklabels=categories)
@@ -216,7 +193,7 @@ def train_and_evaluate(seed):
     plt.savefig(os.path.join(seed_output_path, 'confusion_matrix.png'))
     plt.close()
 
-    # Save training history
+    # save training history
     metrics_to_plot = ['accuracy', 'loss', 'recall', 'precision']
 
     for metric in metrics_to_plot:
@@ -232,10 +209,10 @@ def train_and_evaluate(seed):
         plt.savefig(os.path.join(seed_output_path, f'training_{metric}.png'))
         plt.close()
 
-    # Save model
+    # save model
     model.save(model_save_path)
 
-    # Save results
+    # save results
     results_df = pd.DataFrame({
         'Sample_ID': [f"Sample_{i}" for i in range(len(y_test))],
         'True_Label': [categories[y] for y in y_test],
@@ -244,7 +221,7 @@ def train_and_evaluate(seed):
     })
     results_df.to_csv(os.path.join(seed_output_path, 'test_results.csv'), index=False)
 
-    # Save metrics
+    # save metrics
     metrics_dict = classification_report(y_test, y_pred, target_names=categories, output_dict=True)
     metrics_df = pd.DataFrame({
         'Metric': ['Accuracy', 'Precision', 'Recall', 'F1-Score', 'AUC'],
@@ -269,17 +246,15 @@ def train_and_evaluate(seed):
     }
 
 
-# Load data
+# load data
 X, y = load_features(features_processed_data, categories)
-print(f"Running {len(random_seeds)} experiments")
-
-# Train models
+# train models
 all_results = []
 for seed in random_seeds:
     result = train_and_evaluate(seed)
     all_results.append(result)
 
-# Results summary
+# results summary
 results_df = pd.DataFrame(all_results)
 mean_results = results_df.mean()
 std_results = results_df.std()
@@ -292,11 +267,11 @@ summary_df = pd.DataFrame({
                 std_results['recall'], std_results['f1_score']]
 })
 
-# Save results
+# save results
 results_df.to_csv(os.path.join(results_output_path, 'all_runs_results.csv'), index=False)
 summary_df.to_csv(os.path.join(results_output_path, 'summary_results.csv'), index=False)
 
-# Visualize results
+# visualize results
 plt.figure(figsize=(12, 8))
 metrics = ['accuracy', 'precision', 'recall', 'f1_score', 'auc']
 for i, metric in enumerate(metrics):
@@ -308,12 +283,9 @@ plt.tight_layout()
 plt.savefig(os.path.join(results_output_path, 'metrics_distribution.png'))
 plt.close()
 
-# Print results
 print("\nResults Summary:")
 print(results_df.to_string(index=False))
-
 print("\nStatistics:")
 for _, row in summary_df.iterrows():
     print(f"{row['Metric']}: {row['Mean']:.4f} ± {row['Std Dev']:.4f}")
-
 print(f"\nTraining completed. Results saved to: {results_output_path}")
