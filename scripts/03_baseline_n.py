@@ -12,6 +12,23 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
 
+# path configuration
+positive_folder = "Positive"
+negative_folder = "Negative"
+results_folder = "results"
+
+# parameter configuration
+sample_rate = 16000
+target_duration = 3.0
+supported_formats = ['.wav', '.mp3']
+n_mfcc = 5
+random_seeds = [42, 123, 256, 789, 1024]
+
+# wavelet scattering configuration
+wavelet_J = 6
+wavelet_Q = 8
+min_frequency = 50
+
 
 def get_project_root():
     current_file = os.path.abspath(__file__)
@@ -19,7 +36,7 @@ def get_project_root():
 
 
 class WaveletScattering:
-    def __init__(self, J=6, Q=16, sr=16000):
+    def __init__(self, J=wavelet_J, Q=wavelet_Q, sr=sample_rate):
         self.J = J
         self.Q = Q
         self.sr = sr
@@ -36,21 +53,20 @@ class WaveletScattering:
 
         for j1 in range(1, min(self.J, 5)):
             freq = self.sr / (2 ** j1)
-            if freq < 50:
+            if freq < min_frequency:
                 break
 
             wavelet = self.morlet_wavelet(len(signal), freq)
             signal_fft = np.fft.fft(signal, n=len(signal))
             wavelet_fft = np.fft.fft(wavelet, n=len(signal))
             conv_result = np.fft.ifft(signal_fft * np.conj(wavelet_fft))
-
             modulus = np.abs(conv_result)
             features.append(np.mean(modulus))
 
             if j1 < 3:
                 for j2 in range(j1 + 1, min(j1 + 3, self.J)):
                     freq2 = self.sr / (2 ** j2)
-                    if freq2 < 50:
+                    if freq2 < min_frequency:
                         break
 
                     wavelet2 = self.morlet_wavelet(len(modulus), freq2)
@@ -81,49 +97,48 @@ def apply_data_augmentation(audio, augmentation_type='noise'):
 
     elif augmentation_type == 'pitch':
         pitch_factor = np.random.uniform(-1, 1)
-        return librosa.effects.pitch_shift(audio, sr=16000, n_steps=pitch_factor)
+        return librosa.effects.pitch_shift(audio, sr=sample_rate, n_steps=pitch_factor)
 
     return audio
 
 
 class CovidCoughClassifier:
     def __init__(self):
-        self.wavelet_transformer = WaveletScattering(J=6, Q=8, sr=16000)
+        self.wavelet_transformer = WaveletScattering(J=wavelet_J, Q=wavelet_Q, sr=sample_rate)
 
     def load_audio_files(self, positive_path, negative_path):
         audio_data, labels = [], []
 
-        # Load positive samples
-        pos_files = [f for f in os.listdir(positive_path) if f.endswith('.wav')]
+        # load positive samples
+        pos_files = [f for f in os.listdir(positive_path) if any(f.endswith(ext) for ext in supported_formats)]
         for file in tqdm(pos_files, desc="Loading positive"):
-            audio, _ = librosa.load(os.path.join(positive_path, file), sr=16000)
+            audio, _ = librosa.load(os.path.join(positive_path, file), sr=sample_rate)
             audio_data.append(audio)
             labels.append(1)
 
-        # Load negative samples
-        neg_files = [f for f in os.listdir(negative_path) if f.endswith('.wav')]
+        # load negative samples
+        neg_files = [f for f in os.listdir(negative_path) if any(f.endswith(ext) for ext in supported_formats)]
         for file in tqdm(neg_files, desc="Loading negative"):
-            audio, _ = librosa.load(os.path.join(negative_path, file), sr=16000)
+            audio, _ = librosa.load(os.path.join(negative_path, file), sr=sample_rate)
             audio_data.append(audio)
             labels.append(0)
 
         pos_count = sum(labels)
         neg_count = len(labels) - pos_count
-        print(f"Loaded {neg_count} negative, {pos_count} positive samples")
-        print(f"Ratio: {neg_count / pos_count:.1f}:1")
+        print(f"\nLoaded {neg_count} negative, {pos_count} positive samples")
 
         return audio_data, labels
 
-    def preprocess_audio(self, audio_data, target_duration=3.0):
+    def preprocess_audio(self, audio_data, target_duration=target_duration):
         processed_data = []
-        target_length = int(target_duration * 16000)
+        target_length = int(target_duration * sample_rate)
 
         for audio in tqdm(audio_data, desc="Preprocessing"):
-            # Normalize
+            # normalize
             if np.std(audio) > 0:
                 audio = (audio - np.mean(audio)) / np.std(audio)
 
-            # Adjust length
+            # adjust length
             if len(audio) > target_length:
                 start = (len(audio) - target_length) // 2
                 audio = audio[start:start + target_length]
@@ -135,8 +150,8 @@ class CovidCoughClassifier:
 
         return processed_data
 
-    def data_augmentation(self, audio_data, labels, random_seed=42):
-        np.random.seed(random_seed)
+    def data_augmentation(self, audio_data, labels):
+        np.random.seed(42)
 
         positive_audio = [audio for audio, label in zip(audio_data, labels) if label == 1]
         negative_audio = [audio for audio, label in zip(audio_data, labels) if label == 0]
@@ -154,26 +169,28 @@ class CovidCoughClassifier:
         final_labels = [1] * (len(positive_audio) + len(augmented_positive)) + [0] * len(negative_audio)
 
         print(
-            f"After augmentation: {len(negative_audio)} negative, {len(positive_audio) + len(augmented_positive)} positive")
+            f"\nAfter augmentation: {len(negative_audio)} negative, "
+            f"{len(positive_audio) + len(augmented_positive)} positive"
+        )
         return final_audio_data, final_labels
 
     def extract_features(self, audio_data):
         features = []
 
         for audio in tqdm(audio_data, desc="Extracting features"):
-            # Wavelet scattering features
+            # wavelet scattering features
             scattering_features = self.wavelet_transformer.transform(audio)
 
             # Traditional audio features
-            spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=audio, sr=16000))
-            spectral_bandwidth = np.mean(librosa.feature.spectral_bandwidth(y=audio, sr=16000))
+            spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=audio, sr=sample_rate))
+            spectral_bandwidth = np.mean(librosa.feature.spectral_bandwidth(y=audio, sr=sample_rate))
             zcr = np.mean(librosa.feature.zero_crossing_rate(audio))
 
             # MFCC features
-            mfccs = librosa.feature.mfcc(y=audio, sr=16000, n_mfcc=5)
+            mfccs = librosa.feature.mfcc(y=audio, sr=sample_rate, n_mfcc=n_mfcc)
             mfcc_means = np.mean(mfccs, axis=1)
 
-            # Combine all features
+            # combine all features
             combined_features = np.concatenate([
                 scattering_features,
                 [spectral_centroid, spectral_bandwidth, zcr],
@@ -185,7 +202,7 @@ class CovidCoughClassifier:
         return np.array(features)
 
     def train_and_evaluate_single_run(self, features, labels, seed_output_path, seed=42):
-        # Initialize model
+        # initialize model
         scaler = StandardScaler()
         classifier = AdaBoostClassifier(
             estimator=DecisionTreeClassifier(max_depth=3),
@@ -194,10 +211,10 @@ class CovidCoughClassifier:
             random_state=seed
         )
 
-        # Data preprocessing
+        # data preprocessing
         features_scaled = scaler.fit_transform(features)
 
-        # Data split
+        # data split
         X_train_val, X_test, y_train_val, y_test = train_test_split(
             features_scaled, labels, test_size=0.1, random_state=seed, stratify=labels
         )
@@ -206,16 +223,16 @@ class CovidCoughClassifier:
             X_train_val, y_train_val, test_size=0.2, random_state=seed, stratify=y_train_val
         )
 
-        # Train model
+        # train model
         classifier.fit(X_train, y_train)
 
-        # Validation evaluation
+        # validation evaluation
         y_val_pred = classifier.predict(X_val)
         y_val_pred_prob = classifier.predict_proba(X_val)
         val_accuracy = accuracy_score(y_val, y_val_pred)
         val_auc = roc_auc_score(y_val, y_val_pred_prob[:, 1])
 
-        # Test evaluation
+        # test evaluation
         y_pred = classifier.predict(X_test)
         y_pred_prob = classifier.predict_proba(X_test)
 
@@ -225,9 +242,7 @@ class CovidCoughClassifier:
         categories = ["Negative", "Positive"]
         cr = classification_report(y_test, y_pred, target_names=categories, digits=6, output_dict=True)
 
-        print(f"Seed {seed} - Test Acc: {accuracy:.4f}, AUC: {auc_score:.4f}")
-
-        # Save results
+        # save results
         results_df = pd.DataFrame({
             'Sample_ID': [f"Sample_{i}" for i in range(len(y_test))],
             'True_Label': [categories[y] for y in y_test],
@@ -236,7 +251,7 @@ class CovidCoughClassifier:
         })
         results_df.to_csv(os.path.join(seed_output_path, 'test_results.csv'), index=False)
 
-        # Save metrics
+        # save metrics
         metrics_df = pd.DataFrame({
             'Metric': ['Test_Accuracy', 'Test_Precision (Positive)', 'Test_Recall (Positive)',
                        'Test_F1-Score (Positive)', 'Test_AUC', 'Val_Accuracy', 'Val_AUC'],
@@ -264,38 +279,27 @@ class CovidCoughClassifier:
         }
 
 
-# Main program execution
-# Set paths
+# main program execution
+# set paths
 project_root = get_project_root()
-positive_path = os.path.join(project_root, "data", "raw", "Positive")
-negative_path = os.path.join(project_root, "data", "raw", "Negative")
-base_results_path = os.path.join(project_root, "results")
+positive_path = os.path.join(project_root, "data", "raw", positive_folder)
+negative_path = os.path.join(project_root, "data", "raw", negative_folder)
+base_results_path = os.path.join(project_root, results_folder)
 
-# Check data paths
-if not os.path.exists(positive_path) or not os.path.exists(negative_path):
-    print("Data paths do not exist, please check data location")
-    exit()
-
-# Create results directory
+# create results directory
 os.makedirs(base_results_path, exist_ok=True)
 timestamp = datetime.now().strftime("%Y_%m_%d_%H%M")
 results_output_path = os.path.join(base_results_path, f"{timestamp}_benchmark")
 os.makedirs(results_output_path, exist_ok=True)
 
-# Initialize classifier
-random_seeds = [42, 123, 256, 789, 1024]
+# initialize classifier
 classifier = CovidCoughClassifier()
-
-print("Starting data processing...")
 audio_data, labels = classifier.load_audio_files(positive_path, negative_path)
-processed_audio = classifier.preprocess_audio(audio_data, target_duration=3.0)
-augmented_audio, augmented_labels = classifier.data_augmentation(processed_audio, labels, random_seed=42)
+processed_audio = classifier.preprocess_audio(audio_data, target_duration=target_duration)
+augmented_audio, augmented_labels = classifier.data_augmentation(processed_audio, labels)
 features = classifier.extract_features(augmented_audio)
 
-print(f"Feature shape: {features.shape}")
-print("Starting multi-seed training...")
-
-# Multi-seed training
+# multi-seed training
 all_results = []
 for seed in random_seeds:
     seed_output_path = os.path.join(results_output_path, f'seed_{seed}')
@@ -304,7 +308,7 @@ for seed in random_seeds:
     result = classifier.train_and_evaluate_single_run(features, augmented_labels, seed_output_path, seed=seed)
     all_results.append(result)
 
-# Statistics
+# statistics result
 results_df = pd.DataFrame(all_results)
 mean_results = results_df.mean()
 std_results = results_df.std()
@@ -321,15 +325,14 @@ summary_df = pd.DataFrame({
     ]
 })
 
-# Save statistical results
+# save statistical result
 results_df.to_csv(os.path.join(results_output_path, 'all_runs_results.csv'), index=False)
 summary_df.to_csv(os.path.join(results_output_path, 'summary_results.csv'), index=False)
 
-# Print results
-print("\nResults from all runs:")
+# print results
+print("\nResults Summary:")
 print(results_df.to_string(index=False))
-print("\nSummary statistics:")
+print("\nStatistics:")
 for _, row in summary_df.iterrows():
     print(f"{row['Metric']}: {row['Mean']:.4f} ± {row['Std Dev']:.4f}")
-
-print(f"\nTraining completed, results saved to: {results_output_path}")
+print(f"\nTraining completed. Results saved to: {results_output_path}")
