@@ -3,8 +3,8 @@
 A  classification system for COVID-19 cough sound.
 
 ## Project Objective
-- Feature extraction with YAMNet
-- CFC for classification
+- Feature extraction by YAMNet
+- Classification by CfC
 
 ## Project Structure
 
