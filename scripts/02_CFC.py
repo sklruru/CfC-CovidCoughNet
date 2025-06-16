@@ -25,7 +25,7 @@ os.makedirs(results_output_path, exist_ok=True)
 
 # Experiment parameters
 random_seeds = [42, 123, 256, 789, 1024]
-epochs = 2
+epochs = 150
 validation_ratio = 0.2
 test_ratio = 0.1
 batch_size = 16
